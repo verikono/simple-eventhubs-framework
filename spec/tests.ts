@@ -53,8 +53,7 @@ describe(`EventHub Tests version 2`, function() {
             });
 
             it(`Returns a consumer subscription`, async () => {
-
-                const result = await instance.getConsumerSubscription({topic: `mocha-test`, direction: 'inbound'});
+                const result = await instance.getConsumerSubscription({hub: 'mocha-test', topic: `test`, direction: 'inbound'});
                 assert(result.subscription.isRunning, 'failed');
             });
 
@@ -68,25 +67,24 @@ describe(`EventHub Tests version 2`, function() {
             it(`Method exists on instance`, () => {
 
                 assert(typeof instance.getProducer === 'function', 'failed');
+            });
 
-                it(`Errors when topic is not argued`, function(done) {
+            it(`Errors when hub is not argued`, function(done) {
 
-                    try {
-                        instance.getProducer();
-                        done('failed');
-                    }
-                    catch( err ) {
-                        done();
-                    }
+                try {
+                    instance.getProducer();
+                    done('failed');
+                }
+                catch( err ) {
+                    done();
+                }
                 
-                });
+            });
     
-                it(`Returns a EventHubProducerClient`, () => {
+            it(`Returns a EventHubProducerClient`, () => {
     
-                    const result = instance.getProducer({topic: `mocha-test`, direction: 'outbound'});
-                    assert(result instanceof EventHubProducerClient, 'failed');
-                });
-    
+                const result = instance.getProducer({hub: `mocha-test`, direction: 'outbound'});
+                assert(result.client instanceof EventHubProducerClient, 'failed');
             });
 
         });
@@ -97,8 +95,17 @@ describe(`EventHub Tests version 2`, function() {
 
             it(`sets a listener up for this test`, async () => {
 
+
                 await instance.subscribe({
-                    topic: 'mocha-test',
+                    topic: 'listen-test-1',
+                    listener: async msg => {
+                        heard = true;
+                        return 'mocha-test-listener-response';
+                    }
+                });
+
+                await instance.subscribe({
+                    topic: 'listen-test-2',
                     listener: async msg => {
                         heard = true;
                         return 'mocha-test-listener-response';
@@ -109,7 +116,10 @@ describe(`EventHub Tests version 2`, function() {
 
             it(`Invokes`, async () => {
 
-                const result = await instance.invoke({topic: 'mocha-test', payload: 'mocha-test invocation'});
+                const result = await instance.invoke({
+                    topic: 'listen-test-1',
+                    payload: 'mocha-test invocation'
+                });
                 assert(heard && result === 'mocha-test-listener-response', 'failed');
             })
 
@@ -127,13 +137,14 @@ describe(`EventHub Tests version 2`, function() {
 
                 eventhub:EventHubEngine;
 
-                @listen({hub:'mocha-test', topic: 'mocha-test'})
+                @listen({topic:'mocha-test-dec-1'})
                 async myMethod(msg) {
                     assert(msg.hasOwnProperty('test_one'), 'myTest::myMethod on the decorated testclass got a message that did not contain the prop "test_one"');
                     assert(msg.test_one === 'success', 'myTest:myMethod on the decorated testclass expected the value of test_one to be "success"');
                     return {success: 'test_one'};
                 }
 
+                @listen({})
                 async myMethod2( msg ) {
                     console.log('---')
                 }
@@ -150,7 +161,7 @@ describe(`EventHub Tests version 2`, function() {
 
             it(`Invokes a method`, async () => {
 
-                const result = await instance.eventhub.invoke({topic: 'mocha-test', payload: {test_one:"success"}})
+                const result = await instance.eventhub.invoke({topic: 'mocha-test-dec-1', payload: {test_one:"success"}})
                 assert(result.hasOwnProperty('success'), 'failed');
                 assert(result.success === 'test_one', 'failed');
             });

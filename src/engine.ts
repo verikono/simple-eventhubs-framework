@@ -56,9 +56,11 @@ export class EventHubEngine extends EventEmitter {
     }
 
     /**
+     * Invoke a listener over the eventhub
      * 
      * @param props the argument object
-     * @param topic the topic being invoked
+     * @param props.hub the hub to communicate over, default: instance.config.AZURE_DEFAULT_EVENTHUB.
+     * @param topic the topic for this communication
      * @param payload Object key/value object as arguments to the listener
      */
     public async invoke( props:I.invokeProps=C.invokeDefaultProps ):Promise<any> {
@@ -71,16 +73,23 @@ export class EventHubEngine extends EventEmitter {
                 payload
             } = props;
 
+            const hub = props.hub || this.config.AZURE_DEFAULT_EVENTHUB;
+            if(!hub)
+                throw `Could not resolve an eventhub to invoke upon`;
+
             return new Promise( async (resolve, reject) => {
 
                 const cid = uuid();
 
                 await this.getConsumerSubscription({
+                    hub,
                     topic,
                     direction: 'outbound',
-                    isInvocation:true,
+                    isReplyConsumer: true,
                     cid,
-                    listener: msg => resolve(msg)
+                    listener: msg => { 
+                        resolve(msg)
+                    }
                 });
 
                 //hack until we can ensure the queues are actually running...
@@ -88,12 +97,11 @@ export class EventHubEngine extends EventEmitter {
                     setTimeout(_=>r(true), 1000)
                 });
 
-                const producer = this.getProducer({topic, direction: 'inbound'});
+                const producer = this.getProducer({hub, direction: 'inbound'});
                 const batch = await producer.client.createBatch();
-                batch.tryAdd({body: {cid, payload}});
+                batch.tryAdd({body: {cid, topic, payload}});
                 await producer.client.sendBatch(batch);
-                logger.info(`Dispatched message to ${topic}-inbound`);
-                //await producer.close();
+                logger.info(`Dispatched message to ${hub}-inbound:${topic}`);
             });
         }
         catch( err ) {
@@ -109,10 +117,13 @@ export class EventHubEngine extends EventEmitter {
 
             //destructure
             const {
-                hub,
                 topic,
                 listener
             } = props;
+
+            const hub = props.hub || this.config.AZURE_DEFAULT_EVENTHUB;
+            if(!hub)
+                throw `could not resolve eventhub for this communcation`;
 
             if(!topic)
                 throw `invalid argument "topic"`;
@@ -121,8 +132,8 @@ export class EventHubEngine extends EventEmitter {
                 throw `invalid argument "listener"`;
 
             const consumerSubscription = await this.getConsumerSubscription({topic, direction: 'inbound'});
-            consumerSubscription.listeners.push(listener);
-            logger.info(`Listener attached to topic: ${topic}-inbound`);
+            consumerSubscription.listeners.push({topic, listener});
+            logger.info(`Listener attached to topic: ${topic} on eventhub: ${hub}-inbound`);
         }
         catch( err ) {
 
@@ -146,16 +157,18 @@ export class EventHubEngine extends EventEmitter {
     public async unsubscribe( props:I.unsubscribeProps=C.unsubscribeDefaults ):Promise<boolean> {
 
         const {
-            topic,
+            hub,
             direction
         } = props;
 
-        const subscriptions = this.subscriptions.filter(subscription => 
-            (subscription.topic === topic || topic === undefined ) && ( subscription.direction === direction || direction === undefined)
+        const subscriptions = this.subscriptions.filter(subscription =>
+            (subscription.hub === hub || hub === undefined) && 
+            (subscription.direction === direction || direction === undefined)
         );
 
         const producers = this.producers.filter(producer => 
-            (producer.topic === topic || topic === undefined) && (producer.direction === direction || direction === undefined)
+            (producer.hub === hub || hub === undefined) &&
+            (producer.direction === direction || direction === undefined)
         );
 
         await Promise.all(subscriptions.map(subscription => subscription.consumer.close()));
@@ -175,7 +188,9 @@ export class EventHubEngine extends EventEmitter {
      * @param props.direction string either 'inbound' or 'outbound'
      * @param props.consumerGroup string the consumer group, default: "$Default"
      * @param props.isInvocation boolean consumer will be used for 1 incovation only. (removes the listener once its been used)
-     * @param props.listener Function 
+     * @param props.listener Function
+     * 
+     * @returns
      */
     async getConsumerSubscription( props:I.EgetConsumerSubscriptionProps ):Promise<I.ConsumerSubscription> {
 
@@ -187,46 +202,42 @@ export class EventHubEngine extends EventEmitter {
                 hub,
                 topic,
                 consumerGroup,
-                isInvocation,
+                isReplyConsumer,
                 cid,
                 listener
             } = props;
 
-            hub = hub || this.config['AZURE_EVENTHUB_NAMESPACE'];
+            hub = hub || this.config['AZURE_DEFAULT_EVENTHUB'];
             if(!hub)
                 throw `could not determine the eventhub to use either from an argument or the instance configuration`;
-
-            //ensure props are sane
-            if(!topic)
-                throw `missing argument "topic"`            
             
             if(direction !== 'inbound' && direction !== 'outbound')
                 throw `invalid direction argued - provide as either inbound or outbound`;
 
-
             consumerGroup = consumerGroup || '$Default';
 
-            //mutate topic to the topic and its direction
-            const directionalTopic = `${topic}-${direction}`;
+            //build the 
+            const directionalHub = `${hub}-${direction}`;
 
             //do we have a subscription for this consumer already?
             const existingSubscription = this.subscriptions.find(subscription =>
-                subscription.topic === topic && subscription.direction === direction
+                subscription.hub === hub && subscription.direction === direction
             );
             if(existingSubscription) {
-                logger.info(`Using existing subscription for ${directionalTopic}`)
+                logger.info(`Using existing subscription for ${directionalHub}`)
                 return existingSubscription;
             }
 
             const consumer = new EventHubConsumerClient(
                 consumerGroup,
                 this.config['AZURE_EVENTHUB_CONNECTION_STRING'],
-                directionalTopic
+                directionalHub
             );
 
             //@ts-ignore - context to hoist in info
             const subscription = consumer.subscribe(
                 {
+                    /* @todo: introduce patterns which will determine the process events method , currently this is for RPC */
                     processEvents: async (events, context) => {
 
                         if(!events.length) return;
@@ -237,25 +248,30 @@ export class EventHubEngine extends EventEmitter {
 
                         //gain the reply hub.
                         const replyDirection = direction === 'inbound' ? 'outbound' : 'inbound';
-                        const replyingProducer = this.getProducer({topic, direction: replyDirection}).client;
+                        const replyingProducer = this.getProducer({hub, direction: replyDirection}).client;
                         const batch = await replyingProducer.createBatch();
 
-                        if(isInvocation){
+                        if(isReplyConsumer){
                             for(const event of events) {
                                 if(event.body.cid === cid) {
                                     listener(event.body.result);
                                     await context.updateCheckpoint(event);
                                 }
                             }
+
                         }
                         else {
                             for(const event of events) { 
-                                for(const listener of subscription.listeners) {
-                                    const {cid, payload, result} = event.body;
-                                    const rtrn = listener(payload);
+                                
+                                const {cid, topic, payload} = event.body;
+                                const listeners = subscription.listeners.filter(listener => listener.topic === topic);
+                                
+                                await Promise.all( listeners.map( async listener => {
+                                    const rtrn = listener.listener(payload);
                                     const response = rtrn instanceof Promise ? await rtrn : rtrn;
-                                    batch.tryAdd({body: {cid, result: response}});
-                                }
+                                    batch.tryAdd({body: {cid, topic, result: response}});
+                                }));
+
                                 await context.updateCheckpoint(event);
                             }
                             await replyingProducer.sendBatch(batch);
@@ -270,6 +286,7 @@ export class EventHubEngine extends EventEmitter {
             await onResolvedProp(subscription, 'isRunning')
 
             const consumerSubscription:I.ConsumerSubscription = {
+                hub,
                 topic,
                 direction,
                 subscription,
@@ -280,7 +297,7 @@ export class EventHubEngine extends EventEmitter {
 
             this.subscriptions.push(consumerSubscription);
 
-            logger.info(`Built subscription for ${directionalTopic}`)
+            logger.info(`Built subscription for ${directionalHub}`)
 
             return consumerSubscription;
 
@@ -294,7 +311,7 @@ export class EventHubEngine extends EventEmitter {
      * Get an event producer client
      * 
      * @param props the argument object
-     * @param props.topci string the eventhub/topic
+     * @param props.hub string the eventhub/topic
      */
     getProducer( props:I.getProducerProps=C.getProducerDefaults) {
 
@@ -302,37 +319,43 @@ export class EventHubEngine extends EventEmitter {
 
             //destrucute
             const {
-                topic,
+                hub,
                 direction
             } = props;
 
             //qualify arguments
-            if(!topic)
-                throw `missing argument "topic"`
+            if(!hub)
+                throw `missing argument "hub"`
+
             if(direction !== 'inbound' && direction !== 'outbound')
                 throw 'invalid direction, argue either "inbound" or "outbound"'
 
-            const existing = this.producers.find(producer => 
-                producer.topic === topic && producer.direction === direction
+            const existingProducer = this.producers.find(producer => 
+                producer.hub === hub && producer.direction === direction
             );
 
-            if(existing)
-                return existing;
+            if(existingProducer)
+                return existingProducer;
 
-            const directionalTopic = `${topic}-${direction}`;
+            const directionalHub = `${hub}-${direction}`;
 
             const client = new EventHubProducerClient(
                 this.config['AZURE_EVENTHUB_CONNECTION_STRING'],
-                directionalTopic
+                directionalHub
             );
 
-            const producer = { topic, direction, client };
+            const producer:I.ProducerClient = {
+                hub,
+                direction,
+                client
+            };
             this.producers.push(producer);
 
             return producer;
 
         }
         catch(err) {
+
             throw `EventHubEngine::getProducer has failed - ${err}`;
         }
     }
@@ -350,14 +373,19 @@ export class EventHubEngine extends EventEmitter {
 
             config.AZURE_EVENTHUB_CONNECTION_STRING = config.AZURE_EVENTHUB_CONNECTION_STRING || process.env['AZURE_EVENTHUB_CONNECTION_STRING'];
             config.AZURE_EVENTHUB_NAMESPACE = config.AZURE_EVENTHUB_NAMESPACE || process.env['AZURE_EVENTHUB_NAMESPACE'];
-
-            if(!config.AZURE_EVENTHUB_NAMESPACE)
-                logger.warn(`No default eventhub has been registered, all invocations and listeners must specify their eventhub namespace/hub`);
+            config.AZURE_DEFAULT_EVENTHUB = config.AZURE_DEFAULT_EVENTHUB || process.env['AZURE_DEFAULT_EVENTHUB'];
 
             if(typeof config.AZURE_EVENTHUB_CONNECTION_STRING !== 'string' || config.AZURE_EVENTHUB_CONNECTION_STRING.length < 1)
                 throw `could not determine AZURE_EVENTHUB_CONNECTION_STRING`;
 
+            if(typeof config.AZURE_EVENTHUB_NAMESPACE !== 'string' || config.AZURE_EVENTHUB_NAMESPACE.length < 1)
+                throw `could not determine AZURE_EVENTHUB_NAMESPACE`;
+
+            if(!config.AZURE_DEFAULT_EVENTHUB)
+                logger.warn(`No default eventhub has been registered, all invocations and listeners must specify their eventhub namespace/hub`);
+
             this.config = config;
+
         }
         catch( err ) {
 

@@ -3,6 +3,11 @@ import { EventHubEngine } from './engine';
 import * as I from './types';
 
 
+/**
+ * Class decorator which providing default configuration for its decorated methods
+ * 
+ * @param options dEvent_hub_class
+ */
 export function event_hub_class( options:I.dEvent_hub_class = {} ):Function {
 
     return cls => {
@@ -47,6 +52,7 @@ export function listen( options:I.dListen={} ) {
             topic
         } = options;
 
+        //default the topic to the method name when not provided.
         topic = topic || descriptor.value.name;
 
         cls._eventhub_listeners = cls._eventhub_listeners || []
