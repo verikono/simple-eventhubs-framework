@@ -62,6 +62,7 @@ export class EventHubEngine extends EventEmitter {
      * @param props.hub the hub to communicate over, default: instance.config.AZURE_DEFAULT_EVENTHUB.
      * @param topic the topic for this communication
      * @param payload Object key/value object as arguments to the listener
+     * @param include_cid Boolean attach the cid into the message payload
      */
     public async invoke( props:I.invokeProps=C.invokeDefaultProps ):Promise<any> {
 
@@ -70,7 +71,8 @@ export class EventHubEngine extends EventEmitter {
             //destructure
             const {
                 topic,
-                payload
+                payload,
+                include_cid
             } = props;
 
             const hub = props.hub || this.config.AZURE_DEFAULT_EVENTHUB;
@@ -99,6 +101,8 @@ export class EventHubEngine extends EventEmitter {
 
                 const producer = this.getProducer({hub, direction: 'inbound'});
                 const batch = await producer.client.createBatch();
+                if(include_cid)
+                    payload['cid'] = cid;
                 batch.tryAdd({body: {cid, topic, payload}});
                 await producer.client.sendBatch(batch);
                 logger.info(`Dispatched message to ${hub}-inbound:${topic}`);
@@ -258,7 +262,6 @@ export class EventHubEngine extends EventEmitter {
                                     await context.updateCheckpoint(event);
                                 }
                             }
-
                         }
                         else {
                             for(const event of events) { 

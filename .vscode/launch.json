@@ -7,6 +7,27 @@
         {
             "type": "node",
             "request": "launch",
+            "name": "Perform NUSA Tests",
+            "program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
+            "runtimeArgs": ["-r", "ts-node/register"],
+            "args": [
+                "-r",
+                "ts-node/register",
+                "-u",
+                "tdd",
+                "--timeout",
+                "999999",
+                "--colors",
+                "${workspaceFolder}/spec/nusatest.ts"
+            ],
+            "internalConsoleOptions": "openOnSessionStart",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
             "name": "Perform Tests",
             "program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
             "runtimeArgs": ["-r", "ts-node/register"],
@@ -19,6 +40,27 @@
                 "999999",
                 "--colors",
                 "${workspaceFolder}/spec/tests.ts"
+            ],
+            "internalConsoleOptions": "openOnSessionStart",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Perform Python Tests",
+            "program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
+            "runtimeArgs": ["-r", "ts-node/register"],
+            "args": [
+                "-r",
+                "ts-node/register",
+                "-u",
+                "tdd",
+                "--timeout",
+                "999999",
+                "--colors",
+                "${workspaceFolder}/spec/pytest.ts"
             ],
             "internalConsoleOptions": "openOnSessionStart",
             "skipFiles": [
