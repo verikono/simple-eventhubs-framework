@@ -1,6 +1,6 @@
 {
   "name": "simple-eventhubs-framework",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "A simple framework for node services to use eventhubs",
   "main": "dist/index.js",
   "repository": "git@github.com:verikono/simple-eventhubs-framework.git",
