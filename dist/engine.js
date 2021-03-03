@@ -81,6 +81,9 @@ class EventHubEngine extends events_1.EventEmitter {
                     throw `Could not resolve an eventhub to invoke upon`;
                 return new Promise((resolve, reject) => __awaiter(this, void 0, void 0, function* () {
                     const cid = uuid_1.v4();
+                    if (include_cid)
+                        payload['cid'] = cid;
+                    //get the outbound subscription, attaching a cid/onetime listener
                     yield this.getConsumerSubscription({
                         hub,
                         topic,
@@ -95,10 +98,10 @@ class EventHubEngine extends events_1.EventEmitter {
                     yield new Promise((r) => {
                         setTimeout(_ => r(true), 1000);
                     });
+                    //gain a producer to message down the hub.
                     const producer = this.getProducer({ hub, direction: 'inbound' });
+                    //spin up a batch, and send it down the hub.
                     const batch = yield producer.client.createBatch();
-                    if (include_cid)
-                        payload['cid'] = cid;
                     batch.tryAdd({ body: { cid, topic, payload } });
                     yield producer.client.sendBatch(batch);
                     logger_1.logger.info(`Dispatched message to ${hub}-inbound:${topic}`);
@@ -121,7 +124,7 @@ class EventHubEngine extends events_1.EventEmitter {
                     throw `invalid argument "topic"`;
                 if (typeof listener !== 'function')
                     throw `invalid argument "listener"`;
-                const consumerSubscription = yield this.getConsumerSubscription({ topic, direction: 'inbound' });
+                const consumerSubscription = yield this.getConsumerSubscription({ hub, topic, direction: 'inbound' });
                 consumerSubscription.listeners.push({ topic, listener });
                 logger_1.logger.info(`Listener attached to topic: ${topic} on eventhub: ${hub}-inbound`);
             }
@@ -184,8 +187,16 @@ class EventHubEngine extends events_1.EventEmitter {
                 const directionalHub = `${hub}-${direction}`;
                 //do we have a subscription for this consumer already?
                 const existingSubscription = this.subscriptions.find(subscription => subscription.hub === hub && subscription.direction === direction);
+                //we do, so return it, attaching a listener on it if we have one.
                 if (existingSubscription) {
                     logger_1.logger.info(`Using existing subscription for ${directionalHub}`);
+                    //if we have a listener, lets attach it to this consumer.
+                    if (listener) {
+                        const lst = isReplyConsumer
+                            ? { topic, listener, cid, once: true }
+                            : { topic, listener };
+                        existingSubscription.listeners = existingSubscription.listeners.concat([lst]);
+                    }
                     return existingSubscription;
                 }
                 const consumer = new event_hubs_1.EventHubConsumerClient(consumerGroup, this.config['AZURE_EVENTHUB_CONNECTION_STRING'], directionalHub);
@@ -195,38 +206,52 @@ class EventHubEngine extends events_1.EventEmitter {
                     processEvents: (events, context) => __awaiter(this, void 0, void 0, function* () {
                         if (!events.length)
                             return;
-                        //gain the listener functions on this subscription.
+                        //gain the subscription for this topic and direction
                         const subscription = this.subscriptions.find(subscription => subscription.topic === topic && subscription.direction === direction);
                         //gain the reply hub.
                         const replyDirection = direction === 'inbound' ? 'outbound' : 'inbound';
-                        const replyingProducer = this.getProducer({ hub, direction: replyDirection }).client;
-                        const batch = yield replyingProducer.createBatch();
-                        if (isReplyConsumer) {
-                            for (const event of events) {
-                                if (event.body.cid === cid) {
-                                    listener(event.body.result);
-                                    yield context.updateCheckpoint(event);
-                                }
-                            }
-                        }
-                        else {
-                            for (const event of events) {
-                                const { cid, topic, payload } = event.body;
-                                const listeners = subscription.listeners.filter(listener => listener.topic === topic);
-                                yield Promise.all(listeners.map((listener) => __awaiter(this, void 0, void 0, function* () {
-                                    const rtrn = listener.listener(payload);
+                        const replyingProducer = this.getProducer({ hub, direction: replyDirection });
+                        const batch = yield replyingProducer.client.createBatch();
+                        let reply = false;
+                        //for each event
+                        for (const event of events) {
+                            const { cid, topic, payload, result } = event.body;
+                            //gain all listeners on this subscription, awaiting this event's topic
+                            const listeners = subscription.listeners.filter(listener => listener.topic === topic);
+                            //iterate through the listeners
+                            yield Promise.all(listeners.map((listener) => __awaiter(this, void 0, void 0, function* () {
+                                //if the listener has a cid, ignore this event if the cids dont match
+                                if (!listener.cid || event.body.cid == listener.cid) {
+                                    //this is ugly butttt.. if we received a result, we take this to mean, this is an RPC response event.
+                                    //this RPC pattern should be turfed out to its own methods, its to much B.S. to leave in here -- #@todo.
+                                    const rtrn = listener.listener(payload || result);
+                                    //if we receieve a promise, await it.
                                     const response = rtrn instanceof Promise ? yield rtrn : rtrn;
-                                    batch.tryAdd({ body: { cid, topic, result: response } });
-                                })));
-                                yield context.updateCheckpoint(event);
-                            }
-                            yield replyingProducer.sendBatch(batch);
+                                    //if this is a result, we're done in the chain of events, so blow the event listener off if its tagged for collection as it's been used.
+                                    if (result && !payload) {
+                                        if (listener.once)
+                                            subscription.listeners = subscription.listeners.filter(slistener => slistener !== listener);
+                                    }
+                                    //if this is a payload, we want to respond to use the listener response as a reply event.
+                                    else if (!result && payload) {
+                                        batch.tryAdd({ body: { cid, topic, result: response } });
+                                        reply = true;
+                                    }
+                                    else
+                                        throw `Invalid event receieved - ${JSON.stringify(event)}`;
+                                }
+                            })));
+                            //update the queue's checkpoint marker as we've just processed the event.
+                            yield context.updateCheckpoint(event);
                         }
+                        if (reply)
+                            yield replyingProducer.client.sendBatch(batch);
                     }),
                     processError: (err, context) => __awaiter(this, void 0, void 0, function* () {
                         console.log(`Errored ${err}`);
                     })
                 });
+                //wait to ensure the queue is actually running
                 yield util_1.onResolvedProp(subscription, 'isRunning');
                 const consumerSubscription = {
                     hub,
@@ -237,6 +262,14 @@ class EventHubEngine extends events_1.EventEmitter {
                     type: 'consumer',
                     listeners: []
                 };
+                if (listener) {
+                    consumerSubscription.listeners.push({
+                        topic,
+                        listener,
+                        cid,
+                        once: isReplyConsumer
+                    });
+                }
                 this.subscriptions.push(consumerSubscription);
                 logger_1.logger.info(`Built subscription for ${directionalHub}`);
                 return consumerSubscription;
