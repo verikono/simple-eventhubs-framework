@@ -1,8 +1,11 @@
 
 /**
+ * await a variable until it resolves as truthy
  * 
  * @param obj 
  * @param key 
+ * 
+ * @returns Promise<boolean>
  */
 export function onResolvedProp( obj, key ) {
 

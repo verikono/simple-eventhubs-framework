@@ -30,23 +30,30 @@ describe(`EventHub Tests version 2`, function() {
 
     describe(`EventHubEngine Tests`, () => {
 
-        let instance:EventHubEngine;
 
-        it(`Instantiates`, () => {
+        describe(`Configuration`, () => {
 
-            instance = new EventHubEngine();
-        })
+            let instance:EventHubEngine;
 
-        it(`configures from construction`, () => {
+            it(`Instantiates`, () => {
 
-            assert(
-                instance.config.hasOwnProperty('AZURE_EVENTHUB_CONNECTION_STRING') &&
-                instance.config['AZURE_EVENTHUB_CONNECTION_STRING'].length,
-                'failed.'
-            );
+                instance = new EventHubEngine();
+            })
+
+            it(`configures from construction`, () => {
+
+                assert(
+                    instance.config.hasOwnProperty('AZURE_EVENTHUB_CONNECTION_STRING') &&
+                    instance.config['AZURE_EVENTHUB_CONNECTION_STRING'].length,
+                    'failed.'
+                );
+            });
+
         });
 
         describe(`EventHubEngine::getConsumerSubscription`, () => {
+
+            const instance = new EventHubEngine();
 
             it(`Method exists on instance`, () => {
                 assert(typeof instance.getConsumerSubscription === 'function', 'failed');
@@ -63,6 +70,8 @@ describe(`EventHub Tests version 2`, function() {
         });
 
         describe(`EventHubEngine::getProducer`, () => {
+
+            const instance = new EventHubEngine();
 
             it(`Method exists on instance`, () => {
 
@@ -91,12 +100,13 @@ describe(`EventHub Tests version 2`, function() {
 
         describe(`EventHubEngine::invoke`, () => {
 
+            const instance = new EventHubEngine();
             let heard = false;
 
             it(`sets a listener up for this test`, async () => {
 
-
                 await instance.subscribe({
+                    hub: 'mocha-test',
                     topic: 'listen-test-1',
                     listener: async msg => {
                         heard = true;
@@ -105,6 +115,7 @@ describe(`EventHub Tests version 2`, function() {
                 });
 
                 await instance.subscribe({
+                    hub: 'mocha-test',
                     topic: 'listen-test-2',
                     listener: async msg => {
                         heard = true;
@@ -117,6 +128,7 @@ describe(`EventHub Tests version 2`, function() {
             it(`Invokes`, async () => {
 
                 const result = await instance.invoke({
+                    hub: 'mocha-test',
                     topic: 'listen-test-1',
                     payload: 'mocha-test invocation'
                 });
@@ -130,24 +142,25 @@ describe(`EventHub Tests version 2`, function() {
 
         });
 
-        describe(`Class decoration`, () => {
+        describe.only(`Class decoration`, () => {
+
 
             @event_hub_class()
             class myTest {
 
                 eventhub:EventHubEngine;
 
-                @listen({topic:'mocha-test-dec-1'})
+                @listen({hub: "mocha-test", topic:'mocha-test-dec-1'})
                 async myMethod(msg) {
                     assert(msg.hasOwnProperty('test_one'), 'myTest::myMethod on the decorated testclass got a message that did not contain the prop "test_one"');
                     assert(msg.test_one === 'success', 'myTest:myMethod on the decorated testclass expected the value of test_one to be "success"');
                     return {success: 'test_one'};
                 }
 
-                @listen({})
-                async myMethod2( msg ) {
-                    console.log('---')
-                }
+                // @listen({})
+                // async myMethod2( msg ) {
+                //     console.log('---')
+                // }
 
             }
 
@@ -161,10 +174,30 @@ describe(`EventHub Tests version 2`, function() {
 
             it(`Invokes a method`, async () => {
 
-                const result = await instance.eventhub.invoke({topic: 'mocha-test-dec-1', payload: {test_one:"success"}})
+                const result = await instance.eventhub.invoke({hub: 'mocha-test', topic: 'mocha-test-dec-1', payload: {test_one:"success"}})
                 assert(result.hasOwnProperty('success'), 'failed');
                 assert(result.success === 'test_one', 'failed');
             });
+
+            it(`Invokes the same method, causing a existing event consumer to be used`, async () => {
+
+                const result = await instance.eventhub.invoke({hub: 'mocha-test', topic: 'mocha-test-dec-1', payload: {test_one:"success"}});
+                assert(result.hasOwnProperty('success'), 'failed');
+                assert(result.success === 'test_one', 'failed');
+
+            });
+
+            it(`Instance state test`, () => {
+                assert(instance.eventhub, 'failed');
+                assert(instance.eventhub.subscriptions.length === 2, 'expected a subscription for mocha-test-inbound and mocha-test-outbound');
+
+                const inboundSub = instance.eventhub.subscriptions.find(sub => sub.direction === 'inbound');
+                const outboundSub = instance.eventhub.subscriptions.find(sub => sub.direction === 'outbound');
+
+                assert(inboundSub && outboundSub, 'we have 2 subs but expect an inbound and outbound, which they are not');
+                assert(inboundSub.listeners.length === 1, `expected 1 listener on the inbound sub (the decorated method listening) but we have ${inboundSub.listeners.length}`);
+                assert(outboundSub.listeners.length === 0, `expected 0 listeners on the outbound sub (listeners should no longer exist) but we have ${inboundSub.listeners.length}`);
+            })
 
         });
 

@@ -1,8 +1,15 @@
 
+
+// types have a capital lead-in character indicating where they may be used
+//   - starting with a "d" indicates they're used with decorator props or returns
+//   - staring with a "E" indicates they're for engine methods
+
+
 import {
     EventHubConsumerClient,
     EventHubProducerClient
 } from '@azure/event-hubs';
+import { unsubscribeDefaults } from './const'
 
 export interface EventHubEngineConfig {
 
@@ -66,26 +73,67 @@ export interface ElistenProps {
 }
 
 export interface Subscription {
-    hub:string;
+
+    /* the name of the eventhub */
+    hub: string;
+
+    /* the topic to listen for coming down the eventhub */
     topic?: string;
+
+    /* listen on messages inbound or outbound? */
     direction: 'inbound'|'outbound';
+
+    /* */
     subscription: any;
+
+    /* the subscription type, either listening (consumer) or producing */
     type: 'consumer'|'producer';
 }
 
 export interface ConsumerSubscription extends Subscription{
+    
     type: 'consumer';
     consumer: any;
-    listeners: Array<any>;
+    
+    /* a list of listeners waiting for messages on this hub */
+    listeners: Array<ConsumerSubscriptionListener>;
 }
 
+export interface ConsumerSubscriptionListener {
+
+    /* the topic this listener responds/listens for*/
+    topic: String;
+
+    /* the listener function */
+    listener: Function;
+
+    /* listen for a specific message */
+    cid?: String;
+
+    /* only listen once then purge this listener */
+    once?: Boolean;
+}
+
+export interface ProducerSubscription extends Subscription {
+    //nothing for now.
+}
+
+
 export interface Message {
+    
+    /* a unique id uuid4 for this message */
     cid: string;
+
+    /* the message contents - eventhubs will stringify a javascript object btw */
     payload: any;
 }
 
 export interface unsubscribeProps {
+
+    /* the hub we're unsubscribing from */
     hub?: string;
+
+    /* the hub direction we're unsubscribing from */
     direction?: 'inbound'|'outbound';
 }
 
