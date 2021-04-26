@@ -62,6 +62,7 @@ export class EventHubEngine extends EventEmitter {
      * @param props.hub the hub to communicate over, default: instance.config.AZURE_DEFAULT_EVENTHUB.
      * @param topic the topic for this communication
      * @param payload Object key/value object as arguments to the listener
+     * @param callback Function a function to fire upon response. !!important: if a callback is provided invoke will on longer await a response and continue execution
      * @param include_cid Boolean attach the cid into the message payload
      */
     public async invoke( props:I.invokeProps=C.invokeDefaultProps ):Promise<any> {
@@ -72,6 +73,7 @@ export class EventHubEngine extends EventEmitter {
             const {
                 topic,
                 payload,
+                callback,
                 include_cid
             } = props;
 
@@ -92,8 +94,12 @@ export class EventHubEngine extends EventEmitter {
                     direction: 'outbound',
                     isReplyConsumer: true,
                     cid,
-                    listener: msg => { 
-                        resolve(msg)
+                    listener: async msg => { 
+                        if(typeof callback === 'function') {
+                            await callback(msg);
+                        }
+                        else
+                            resolve(msg)
                     }
                 });
 
@@ -111,6 +117,9 @@ export class EventHubEngine extends EventEmitter {
                 await producer.client.sendBatch(batch);
 
                 logger.info(`Dispatched message to ${hub}-inbound:${topic}`);
+
+                if(typeof callback === 'function')
+                    resolve(true);
             });
         }
         catch( err ) {

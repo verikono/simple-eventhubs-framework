@@ -69,13 +69,14 @@ class EventHubEngine extends events_1.EventEmitter {
      * @param props.hub the hub to communicate over, default: instance.config.AZURE_DEFAULT_EVENTHUB.
      * @param topic the topic for this communication
      * @param payload Object key/value object as arguments to the listener
+     * @param callback Function a function to fire upon response. !!important: if a callback is provided invoke will on longer await a response and continue execution
      * @param include_cid Boolean attach the cid into the message payload
      */
     invoke(props = C.invokeDefaultProps) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
                 //destructure
-                const { topic, payload, include_cid } = props;
+                const { topic, payload, callback, include_cid } = props;
                 const hub = props.hub || this.config.AZURE_DEFAULT_EVENTHUB;
                 if (!hub)
                     throw `Could not resolve an eventhub to invoke upon`;
@@ -90,9 +91,13 @@ class EventHubEngine extends events_1.EventEmitter {
                         direction: 'outbound',
                         isReplyConsumer: true,
                         cid,
-                        listener: msg => {
-                            resolve(msg);
-                        }
+                        listener: (msg) => __awaiter(this, void 0, void 0, function* () {
+                            if (typeof callback === 'function') {
+                                yield callback(msg);
+                            }
+                            else
+                                resolve(msg);
+                        })
                     });
                     //hack until we can ensure the queues are actually running...
                     yield new Promise((r) => {
@@ -105,6 +110,8 @@ class EventHubEngine extends events_1.EventEmitter {
                     batch.tryAdd({ body: { cid, topic, payload } });
                     yield producer.client.sendBatch(batch);
                     logger_1.logger.info(`Dispatched message to ${hub}-inbound:${topic}`);
+                    if (typeof callback === 'function')
+                        resolve(true);
                 }));
             }
             catch (err) {

@@ -142,7 +142,47 @@ describe(`EventHub Tests version 2`, function() {
 
         });
 
-        describe.only(`Class decoration`, () => {
+        describe.only(`EventHubEngine::invoke - using callback`, () => {
+
+            const instance = new EventHubEngine();
+            let heard = false;
+
+
+            it(`sets a listener up for this test`, async () => {
+
+                await instance.subscribe({
+                    hub: 'mocha-test',
+                    topic: 'invoke-test-callback',
+                    listener: async msg => {
+                        return 'mocha-test-listener-response';
+                    }
+                });
+
+                const result = await instance.invoke({
+                    hub: 'mocha-test',
+                    topic: 'invoke-test-callback',
+                    payload: 'mocha-test invocation',
+                    callback: async msg => {
+                        heard = true;
+                    }
+                });
+
+                let interval = null;
+
+                await new Promise((resolve, reject) => {
+                    interval = setInterval(() => {
+                        if(heard === true) {
+                            clearInterval(interval);
+                            resolve(true);
+                        }
+                    }, 1000);
+                })
+
+            });
+
+        });
+
+        describe(`Class decoration`, () => {
 
 
             @event_hub_class()

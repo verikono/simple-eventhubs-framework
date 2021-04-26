@@ -64,6 +64,7 @@ export interface invokeProps {
     topic: string;
     payload: any;
     include_cid?: boolean;
+    callback?: Function;
 }
 
 export interface ElistenProps {
