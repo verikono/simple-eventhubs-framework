@@ -30,7 +30,6 @@ describe(`EventHub Tests version 2`, function() {
 
     describe(`EventHubEngine Tests`, () => {
 
-
         describe(`Configuration`, () => {
 
             let instance:EventHubEngine;
@@ -142,7 +141,7 @@ describe(`EventHub Tests version 2`, function() {
 
         });
 
-        describe.only(`EventHubEngine::invoke - using callback`, () => {
+        describe(`EventHubEngine::invoke - using callback`, () => {
 
             const instance = new EventHubEngine();
             let heard = false;
@@ -186,11 +185,13 @@ describe(`EventHub Tests version 2`, function() {
 
 
             @event_hub_class()
+            //@ts-ignore
             class myTest {
 
                 eventhub:EventHubEngine;
 
                 @listen({hub: "mocha-test", topic:'mocha-test-dec-1'})
+                //@ts-ignore
                 async myMethod(msg) {
                     assert(msg.hasOwnProperty('test_one'), 'myTest::myMethod on the decorated testclass got a message that did not contain the prop "test_one"');
                     assert(msg.test_one === 'success', 'myTest:myMethod on the decorated testclass expected the value of test_one to be "success"');
